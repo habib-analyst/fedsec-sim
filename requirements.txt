@@ -1,0 +1,7 @@
+# CPU-only PyTorch; keep everything else light.
+--index-url https://download.pytorch.org/whl/cpu
+torch
+numpy
+matplotlib
+pyyaml
+pytest

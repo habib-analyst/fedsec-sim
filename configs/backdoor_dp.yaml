@@ -1,0 +1,16 @@
+# Backdoor attack (20% malicious plant a trigger) vs DP-FedAvg.
+seed: 42
+n_clients: 20
+malicious_fraction: 0.2
+samples_per_client: 200
+n_features: 10
+dirichlet_alpha: 0.5
+local_epochs: 2
+lr: 0.05
+rounds: 20
+attack: backdoor
+poison_fraction: 0.3
+backdoor_target_label: 0
+defense: dp_fedavg
+dp_clip_norm: 1.0
+dp_noise_multiplier: 0.8

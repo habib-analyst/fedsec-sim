@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fedsec-sim"
+version = "0.1.0"
+description = "CPU-friendly federated learning security simulator: prototype poisoning attacks and defenses"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Habib Ur Rehman" }]
+dependencies = ["torch", "numpy", "matplotlib", "pyyaml"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+fedsec = "fedsec.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["fedsec*"]

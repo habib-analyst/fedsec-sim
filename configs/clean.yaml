@@ -1,0 +1,12 @@
+# Baseline: no attack, plain FedAvg aggregation.
+seed: 42
+n_clients: 20
+malicious_fraction: 0.0
+samples_per_client: 200
+n_features: 10
+dirichlet_alpha: 0.5
+local_epochs: 2
+lr: 0.05
+rounds: 20
+attack: none
+defense: fedavg
