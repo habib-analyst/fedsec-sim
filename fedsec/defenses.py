@@ -25,10 +25,11 @@ __all__ = [
     "coordinate_median",
     "krum",
     "dp_fedavg",
+    "cac",
     "aggregate",
 ]
 
-AGGREGATORS = ("fedavg", "trimmedmean", "median", "krum", "dp_fedavg")
+AGGREGATORS = ("fedavg", "trimmedmean", "median", "krum", "dp_fedavg", "cac")
 
 
 def _stack(updates: list[torch.Tensor]) -> torch.Tensor:
@@ -119,6 +120,76 @@ def dp_fedavg(
     return mean + noise, report
 
 
+def cac(
+    updates: list[torch.Tensor],
+    alpha: float = 2.0,
+    power: float = 2.0,
+    eps: float = 1e-12,
+) -> tuple[torch.Tensor, dict]:
+    """Centered Adaptive Clipping (CAC) — Byzantine-robust aggregation.
+
+    A new rule combining three ideas:
+
+    1. **Robust center**: coordinate-wise median ``m`` of the updates.
+    2. **Adaptive radius**: ``r = alpha * median_i ||u_i - m||`` — the
+       clipping radius is learned from the data each round (median-based,
+       hence itself robust); no hand-tuned threshold.
+    3. **Trust reweighting**: after clipping every update to the ball
+       ``B(m, r)``, weight it by ``w_i = 1 / (1 + (d_i / r)^power)`` —
+       close-to-center updates dominate, far ones are suppressed.
+
+    **Exact FedAvg reduction.** If every update already lies inside the
+    trust ball (``max_i d_i <= r``), CAC skips clipping/reweighting and
+    returns the plain arithmetic mean — *exactly* FedAvg. Under honest
+    conditions this branch fires most rounds, so CAC costs nothing when
+    there is no attack.
+
+    **Breakdown point.** ``floor((n - 1) / 2)`` (see ``hidden_files/papers/
+    cac/cac_proof.md``): with fewer than half the clients Byzantine, both
+    the center and the radius stay bounded by honest quantities, every
+    (clipped) update lies in the bounded ball ``B(m, r)``, and any convex
+    combination of them does too — the aggregate cannot be driven to
+    infinity.
+
+    Returns ``(aggregated_update, report)``; the report records which
+    branch fired, the radius, and weight statistics (used by experiments
+    to measure the FedAvg-fallback rate).
+    """
+    s = _stack(updates)
+    n = s.shape[0]
+    center = s.median(dim=0).values
+    diff = s - center
+    d = diff.norm(dim=1)
+    med_d = d.median()
+    r = alpha * med_d
+    r_val = r.item()
+    d_max = d.max().item()
+    if d_max <= r_val:
+        # Homogeneous round: exactly FedAvg.
+        report = {
+            "cac_branch": "fedavg",
+            "cac_radius": r_val,
+            "cac_max_distance": d_max,
+            "cac_median_distance": med_d.item(),
+        }
+        return s.mean(dim=0), report
+    # Robust branch: clip to B(center, r), then trust-reweight.
+    scale = torch.clamp(r / (d + eps), max=1.0)
+    clipped = center + diff * scale.unsqueeze(1)
+    w = 1.0 / (1.0 + (d / (r + eps)).pow(power))
+    w = w / w.sum()
+    agg = (w.unsqueeze(1) * clipped).sum(dim=0)
+    report = {
+        "cac_branch": "robust",
+        "cac_radius": r_val,
+        "cac_max_distance": d_max,
+        "cac_median_distance": med_d.item(),
+        "cac_min_weight": w.min().item(),
+        "cac_max_weight": w.max().item(),
+    }
+    return agg, report
+
+
 def aggregate(
     name: str,
     updates: list[torch.Tensor],
@@ -147,5 +218,11 @@ def aggregate(
             clip_norm=kwargs.get("dp_clip_norm", 1.0),
             noise_multiplier=kwargs.get("dp_noise_multiplier", 0.5),
             generator=gen,
+        )
+    if name == "cac":
+        return cac(
+            updates,
+            alpha=kwargs.get("cac_alpha", 2.0),
+            power=kwargs.get("cac_power", 2.0),
         )
     raise ValueError(f"Unknown aggregation rule: {name!r} (expected one of {AGGREGATORS})")
