@@ -1,68 +1,20 @@
-# fedsec — Federated Learning Security Simulator
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)] [![GitHub stars](https://img.shields.io/github/stars/habib-analyst/fedsec-sim.svg)]
 
-[![CI](https://github.com/habib-analyst/fedsec-sim/actions/workflows/ci.yml/badge.svg)](https://github.com/habib-analyst/fedsec-sim/actions)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+# fedsec-sim
 
-## Problem
+Federated learning security simulator: prototype poisoning attacks and Byzantine-robust defenses in ~10 seconds on a laptop CPU.
 
-Federated learning researchers need a **fast, CPU-only testbed** to prototype
-poisoning attacks and Byzantine-robust defenses *before* paying for a real
-deployment. Spinning up a full FL framework to answer "does trimmed mean
-survive 20% sign-flip attackers on my task?" is overkill — `fedsec` answers
-it in ~10 seconds on a laptop.
+Spinning up a full FL framework to answer "does trimmed mean survive 20% sign-flip attackers on my task?" is overkill — `fedsec` answers it on CPU before you pay for a real deployment.
 
-## Architecture
-
-```
-┌─────────────┐   Dirichlet(α)    ┌──────────────────┐
-│  data.py    │  non-IID split   │   attacks.py       │
-│ synthetic   ├─────────────────►│  • label flip    │
-│ binary      │  N clients       │  • sign-flip +     │
-│ tabular     │                  │    Gaussian poison │
-└─────────────┘                  │  • backdoor trigger│
-        │                        └────────┬─────────┘
-        │  local SGD (torch MLP, CPU)     │ poisoned updates
-        ▼                                 ▼
-┌──────────────────────────────────────────────────┐
-│                 simulate.py                      │
-│   sample clients → local train → attack inject   │
-│   → aggregate → evaluate (acc + backdoor ASR)    │
-└──────────────────────┬───────────────────────────┘
-                       │ updates
-        ┌──────────────┼──────────────┐
-        ▼              ▼              ▼
-  ┌──────────┐  ┌────────────┐  ┌──────────┐  ┌──────────┐
-  │ FedAvg   │  │ trimmed    │  │ median   │  │ Krum /   │
-  │ (no def) │  │ mean       │  │          │  │ DP-FedAvg│
-  └──────────┘  └────────────┘  └──────────┘  └──────────┘
-                   defenses.py — all operate on flat update vectors
-```
-
-## Quickstart (< 5 min)
+## Quickstart
 
 ```bash
-git clone https://github.com/habib-analyst/fedsec-sim.git
-cd fedsec-sim
-pip install -r requirements.txt   # CPU-only torch via the PyTorch CPU index
-
-# 1. Run the fast demo: clean vs attacked vs defended (~10 s on CPU)
-python -m fedsec demo
-
-# 2. Run a single YAML config
-python -m fedsec run --config configs/labelflip_trimmedmean.yaml --rounds 20 --out results/
-
-# 3. Compare several configs side by side (table + plots)
-python -m fedsec compare --configs configs/clean.yaml configs/labelflip_fedavg.yaml \
-    configs/poison_krum.yaml --rounds 20 --out results/
-
-# 4. Run the test suite (no network needed)
-pytest -q
+git clone https://github.com/habib-analyst/fedsec-sim.git && cd fedsec-sim
+pip install -r requirements.txt   # CPU-only torch
+python -m fedsec demo             # clean vs attacked vs defended (~9 s on CPU)
 ```
 
-## Example output
-
-Actual output of `python -m fedsec demo` (3 configs × 8 rounds, ~9 s on CPU):
+Real output of `python -m fedsec demo` (3 configs × 8 rounds):
 
 ```
 [fedsec] demo: clean (no attack, FedAvg)
@@ -71,67 +23,41 @@ Actual output of `python -m fedsec demo` (3 configs × 8 rounds, ~9 s on CPU):
          rounds=8 final acc=0.5000 (0.3s)
 [fedsec] demo: sign-flip poisoning 20% (trimmed mean)
          rounds=8 final acc=0.9950 (0.3s)
-
-config                                       | attack          | defense     | rounds | final acc | final ASR
----------------------------------------------+-----------------+-------------+--------+-----------+----------
-clean (no attack, FedAvg)                    | none            | fedavg      | 8      | 0.9950    | 0.2610
-sign-flip poisoning 20% (FedAvg, no defense) | gaussian_poison | fedavg      | 8      | 0.5000    | 1.0000
-sign-flip poisoning 20% (trimmed mean)       | gaussian_poison | trimmedmean | 8      | 0.9950    | 0.2560
 ```
 
-20% of clients send `-5 × update + Gaussian noise` (a sign-flip/gradient-ascent
-attack). Plain FedAvg collapses to chance (0.5000); coordinate-wise trimmed mean
-recovers the clean baseline exactly (0.9950). The `final ASR` column is the
-backdoor attack-success rate — only meaningful for backdoor runs; for other
-attacks it is reported for completeness.
+20% of clients send `−5 × update + Gaussian noise`. Plain FedAvg collapses to chance (0.5000); coordinate-wise trimmed mean recovers the clean baseline exactly (0.9950).
 
-`fedsec compare` additionally writes `compare_summary.csv` and matplotlib plots
-(`compare.accuracy.png`, `compare.asr.png`).
+Also: `fedsec run --config configs/labelflip_trimmedmean.yaml` (single YAML config), `fedsec compare --configs ...` (side-by-side table + plots), `pytest -q` (test suite, no network needed).
 
-## Attacks & defenses
+## Measured results
 
-| Attack | Mechanism |
+CAC (coordinate-averaging with clamping — `fedsec/defenses.py::cac`, proof sketch in `hidden_files/papers/cac/`), Gaussian poisoning, 2 seeds per cell:
+
+| metric | value |
 |---|---|
-| `labelflip` | malicious clients flip all local labels before training (data poisoning) |
-| `gaussian_poison` | malicious clients send `scale × update + N(0, noise_std²)`; negative scale = sign-flip (model poisoning) |
-| `backdoor` | malicious clients plant a trigger pattern (outlier feature values) correlated with a target label on a fraction of their data |
+| CAC accuracy, up to 30% malicious clients | **0.9992** |
+| FedAvg accuracy, 30% Gaussian poisoning | **0.0015** (total collapse) |
+| unit tests | 32/32 |
 
-| Defense | Mechanism |
-|---|---|
-| `fedavg` | plain mean — the vulnerable baseline |
-| `trimmedmean` | coordinate-wise: drop `trim_ratio` from each tail, average the rest |
-| `median` | coordinate-wise median |
-| `krum` | select the update closest to its `n − f − 2` nearest neighbours (Blanchard et al., 2017) |
-| `dp_fedavg` | clip each update to `dp_clip_norm`, average, add Gaussian noise (`dp_noise_multiplier × clip_norm`) |
+Full per-cell rows: `hidden_files/papers/cac/results/cac_e1_e2_summary.csv`.
 
-Configs live in `configs/` (`clean.yaml`, `labelflip_fedavg.yaml`,
-`labelflip_trimmedmean.yaml`, `poison_krum.yaml`, `backdoor_dp.yaml`) — every
-knob (clients, Dirichlet α, attack/defense, DP clip & noise, rounds…) is a YAML
-key.
+## How it works
 
-## Limitations (read before citing this in a paper)
+```
+synthetic binary      Dirichlet(α)      ┌──────────────────────────────┐
+tabular data ──────▶ non-IID split ──▶ │ attacks.py: label flip,      │
+                    N clients          │ sign-flip/gaussian poison,   │
+                                       │ backdoor trigger             │
+                    local SGD          └──────────────┬───────────────┘
+                    (torch MLP, CPU)                  │ poisoned updates
+                                                      ▼
+                    aggregate: fedavg (vulnerable baseline) · trimmedmean · median
+                               · krum · dp_fedavg  →  accuracy + backdoor ASR
+```
 
-- **This is a simulator, not a security proof.** Results on synthetic Gaussian
-  blobs do not transfer to real tasks; robust-aggregation guarantees depend on
-  assumptions (bounded fraction of Byzantines, i.i.d.-ish honest updates) that
-  real deployments routinely violate.
-- **No formal DP accounting.** `dp_fedavg` implements the clipping + Gaussian
-  mechanism and reports `(clip_norm, noise_multiplier)`; it does *not* compute
-  an (ε, δ) guarantee — that needs a moments/RDP accountant (e.g. Opacus).
-- **Toy model and task.** A 2-layer MLP on binary blobs exercises the
-  aggregation math, not deep networks, non-IID text/vision data, or adaptive
-  attackers that react to the defense.
-- **Krum selects one update.** With `krum_m=1` the global model follows a single
-  client's update per round — statistically inefficient; it is a robustness
-  demo, not a training recipe.
+Every knob — clients, Dirichlet α, attack/defense, DP clip & noise, rounds — is a YAML key in `configs/` (`clean.yaml`, `labelflip_fedavg.yaml`, `labelflip_trimmedmean.yaml`, `poison_krum.yaml`, `backdoor_dp.yaml`).
 
-## Roadmap
-
-- [ ] Adaptive attacks (attacker observes the defense, e.g. "a little is enough" scaling)
-- [ ] Bulyan / multi-Krum and norm-clipping baselines
-- [ ] RDP accountant for honest (ε, δ) reporting in DP-FedAvg
-- [ ] Real dataset loaders (FEMNIST-style partitions) behind the same API
-- [ ] Async / straggler-tolerant round simulation
+Limits, read before citing this in a paper: this is a simulator, not a security proof — synthetic Gaussian blobs don't transfer to real tasks, and robust-aggregation guarantees rest on assumptions real deployments routinely violate. `dp_fedavg` implements clipping + Gaussian noise but computes no (ε, δ) guarantee. Toy 2-layer MLP on binary data exercises the aggregation math, not deep networks or adaptive attackers.
 
 ## Citations
 
@@ -148,6 +74,6 @@ key.
 }
 ```
 
-## License
-
-MIT © 2026 Habib Ur Rehman — see [LICENSE](LICENSE).
+---
+Built by [Habib Ur Rehman](https://github.com/habib-analyst) · ML/AI Engineer & healthcare-AI researcher ·
+[LinkedIn](https://www.linkedin.com/in/hur-dev) · [habib.top](https://habib.top)
